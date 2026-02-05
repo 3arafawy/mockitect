@@ -11,14 +11,14 @@ Mockitect follows a phased approach to building a local-first HTTP mocking servi
 All development follows strict GitHub Flow:
 
 ```
-main (always deployable)
+master (always deployable)
   ├── feature/database-setup
   ├── feature/matcher-system
   └── feature/inertia-ui
 ```
 
 **Rules:**
-- `main` is **always production-ready**
+- `master` is **always production-ready**
 - All work in **feature branches** (1-3 days)
 - All changes via **Pull Requests**
 - Documentation versioned with code
@@ -389,8 +389,8 @@ php artisan mockitect:export
 **Ready to build?** Create your first feature branch:
 
 ```bash
-git checkout main
-git pull origin main
+git checkout master
+git pull origin master
 git checkout -b feature/database-setup
 ```
 

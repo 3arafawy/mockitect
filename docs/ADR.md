@@ -7,7 +7,7 @@ This document records all architectural decisions for Mockitect, with rationale 
 ### Branching Strategy
 
 ```
-main (production-ready)
+master (production-ready)
   │
   ├── feature/database-setup
   ├── feature/matcher-system
@@ -16,7 +16,7 @@ main (production-ready)
 ```
 
 **Rules:**
-- `main` branch is **always deployable**
+- `master` branch is **always deployable**
 - All work happens in **feature branches** (`feature/...`)
 - Feature branches are **short-lived** (1-3 days)
 - All changes go through **Pull Requests**
@@ -25,9 +25,9 @@ main (production-ready)
 ### Feature Branch Workflow
 
 ```bash
-# Create feature branch from main
-git checkout main
-git pull origin main
+# Create feature branch from master
+git checkout master
+git pull origin master
 git checkout -b feature/database-setup
 
 # Work on feature + update docs
