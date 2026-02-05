@@ -128,7 +128,7 @@ npm run dev
 We follow **GitHub Flow**:
 
 ```
-main (always deployable)
+master (always deployable)
   ├── feature/database-setup
   ├── feature/matcher-system
   └── feature/inertia-ui
