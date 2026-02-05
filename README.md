@@ -23,7 +23,7 @@ Mockitect intercepts HTTP requests and returns configured responses. Change your
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/mockitect.git
+git clone https://github.com/3arafawy/mockitect.git
 cd mockitect
 
 # Install dependencies
