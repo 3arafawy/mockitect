@@ -49,13 +49,20 @@ git push origin feature/database-setup
 
 ## ADR-001: Local-First Architecture
 
-**Status:** Accepted | **Implemented:** Phase 1 | **PR:** N/A
+**Status:** Accepted | **Implemented:** Phase 1 | **PR:** feature/phase1-implementation
 
 ### Context
 Mockitect is a local development tool for mocking external API integrations. Architecture must support running entirely on a developer's machine.
 
 ### Decision
 Adopt local-first, containerized architecture using Laravel Sail.
+
+### Implementation Notes
+- Single Docker service in `compose.yaml`
+- Uses `laravel.test` service with PHP 8.5
+- Exposes ports 80 (HTTP) and 5173 (Vite dev server)
+- Volume mounts current directory for live code changes
+- Zero local dependencies required (Docker only)
 
 ### Rationale
 - Zero external dependencies
@@ -72,10 +79,20 @@ Adopt local-first, containerized architecture using Laravel Sail.
 
 ## ADR-002: SQLite as Primary Database
 
-**Status:** Accepted | **Implemented:** Phase 1 Day 1 | **PR:** #TODO
+**Status:** Accepted | **Implemented:** Phase 1 Day 1 | **PR:** feature/phase1-implementation
 
 ### Context
 Need a database that works seamlessly in a local containerized environment.
+
+### Implementation Notes
+- Database file: `database/database.sqlite`
+- Auto-created by Laravel migrations
+- 3 migrations created:
+  1. `2024_01_01_000001_create_mocks_table.php`
+  2. `2024_01_01_000002_create_scenarios_table.php`
+  3. `2024_01_01_000003_create_request_logs_table.php`
+- JSON columns used for flexible config (`match_rules`, `response_config`)
+- Proper indexes on `is_active`, `priority`, and `created_at`
 
 ### Decision
 Use SQLite as default database with PostgreSQL migration path.
@@ -109,7 +126,7 @@ Consider PostgreSQL only if:
 
 ## ADR-003: Strategy Pattern for Request Matching
 
-**Status:** Accepted | **Implemented:** Phase 1 Day 2 | **PR:** #TODO
+**Status:** Accepted | **Implemented:** Phase 1 Day 2 | **PR:** feature/phase1-implementation
 
 ### Context
 Need to match HTTP requests against mocks using various criteria (path, method, headers, body). Matching logic must be extensible.
@@ -125,6 +142,22 @@ interface RequestMatcherInterface {
     public function type(): string;
 }
 ```
+
+### Implementation Notes
+**Created Matchers:**
+1. **PathMatcher** (`app/Services/Matchers/PathMatcher.php`)
+   - Supports: exact, prefix, regex, wildcard
+   - Specificity: exact(100), regex(50), prefix(20), wildcard(10)
+
+2. **MethodMatcher** (`app/Services/Matchers/MethodMatcher.php`)
+   - Supports: exact, any
+   - Specificity: exact(20), any(0)
+
+3. **HeaderMatcher** (`app/Services/Matchers/HeaderMatcher.php`)
+   - Supports: exact, contains, regex, exists
+   - Specificity: exact(10), contains(8), regex(7), exists(5)
+
+**Registered in:** `MockMatchingService::registerDefaultMatchers()`
 
 ### Rationale
 - Clean separation of concerns
@@ -142,7 +175,7 @@ interface RequestMatcherInterface {
 
 ## ADR-004: Priority + Specificity Matching Algorithm
 
-**Status:** Accepted | **Implemented:** Phase 1 Day 3 | **PR:** #TODO
+**Status:** Accepted | **Implemented:** Phase 1 Day 3 | **PR:** feature/phase1-implementation
 
 ### Context
 Multiple mocks may match same request. Need deterministic rules to select "best" match.
@@ -168,6 +201,29 @@ Combined explicit priority + calculated specificity score.
  */
 ```
 
+### Implementation Notes
+**Implementation:** `app/Services/MockMatchingService.php`
+
+**Algorithm Steps:**
+1. Query active mocks ordered by priority DESC
+2. Group mocks by priority level
+3. For each priority group (highest first):
+   - Filter mocks that match ALL rules
+   - Sort by specificity score DESC
+   - Return first match
+4. If no matches in current priority, move to next lower priority
+
+**Key Methods:**
+- `findMatch(Request $request): ?Mock` - Main entry point
+- `calculateSpecificityScore(array $rules): int` - Scores rule sets
+- `matchesAllRules(Request $request, array $rules): bool` - Validates all rules match
+
+**Test Coverage:** `tests/Unit/Services/MockMatchingServiceTest.php`
+- Tests priority resolution
+- Tests specificity within same priority
+- Tests wildcard vs exact matching
+- Tests header matching
+
 ### Example
 ```
 Mock A: POST /users (exact) + JSON body = 100 + 20 + 30 = 150
@@ -179,7 +235,7 @@ Mock B: POST /users (exact) = 100 + 20 = 120
 
 ## ADR-005: JSON Column Flexibility
 
-**Status:** Accepted | **Implemented:** Phase 1 Day 1 | **PR:** #TODO
+**Status:** Accepted | **Implemented:** Phase 1 Day 1 | **PR:** feature/phase1-implementation
 
 ### Context
 Mock configurations have flexible, nested structures that evolve over time.
@@ -195,6 +251,31 @@ protected $casts = [
     'state_machine' => 'array',
 ];
 ```
+
+### Implementation Notes
+**Models with JSON casts:**
+1. **Mock model** (`app/Models/Mock.php`)
+   - `match_rules`: Array of rule objects
+   - `response_config`: Response configuration object
+   - Auto-casts between JSON ↔ PHP arrays
+
+2. **Scenario model** (`app/Models/Scenario.php`)
+   - `state_machine`: State machine configuration
+
+3. **RequestLog model** (`app/Models/RequestLog.php`)
+   - `headers`: Request headers
+   - `query_params`: Query parameters
+   - `response_headers`: Response headers
+
+**Database Schema:**
+- All JSON columns use `$table->json('column_name')`
+- Works identically on SQLite and PostgreSQL
+- Laravel handles serialization/deserialization
+
+**Benefits Realized:**
+- Added HeaderMatcher without database migration
+- Flexible response configuration structure
+- Easy to extend with new matcher types
 
 ### Rationale
 - Flexibility to add matchers without migrations
@@ -223,7 +304,7 @@ protected $casts = [
 
 ## ADR-006: Event-Driven Architecture
 
-**Status:** Accepted | **Implemented:** Phase 1 Day 4 | **PR:** #TODO
+**Status:** Accepted | **Implemented:** Phase 1 Day 4 | **PR:** feature/phase1-implementation
 
 ### Context
 Need extension points for logging, metrics, and future features without modifying core code.
@@ -231,11 +312,39 @@ Need extension points for logging, metrics, and future features without modifyin
 ### Decision
 Use Laravel Events for all extension points.
 
+### Implementation Notes
+**Events Created:**
+1. `MockRequestMatched` (`app/Events/MockRequestMatched.php`)
+   - Fired when request matches a mock
+   - Payload: Request, Mock model, Response
+   - Used by: LogMockRequestListener
+
+2. `MockRequestNotMatched` (`app/Events/MockRequestNotMatched.php`)
+   - Fired when no mock matches request
+   - Payload: Request
+   - Used by: LogMockRequestListener
+
+**Listeners Created:**
+- `LogMockRequestListener` (`app/Listeners/LogMockRequestListener.php`)
+  - Handles both Matched and NotMatched events
+  - Logs to Laravel log channel
+  - Synchronous execution (Phase 1)
+
+**Fired in:** `MockRequestHandler::handle()`
+```php
+Event::dispatch(new MockRequestMatched($request, $mock, $response));
+Event::dispatch(new MockRequestNotMatched($request));
+```
+
+**Test Coverage:** `tests/Feature/MockRequestHandlerTest.php`
+- Tests events are dispatched
+- Tests with Event::fake() for isolation
+
 ### Key Events
 - `MockRequestMatched`: When a request matches
 - `MockRequestNotMatched`: When no mock matches
-- `ScenarioStateChanged`: Scenario transition
-- `MockCreated/Updated/Deleted`: CRUD operations
+- `ScenarioStateChanged`: Scenario transition (Phase 2)
+- `MockCreated/Updated/Deleted`: CRUD operations (Phase 2)
 
 ### Future Listeners (Phase 4+)
 - Metrics collection (Prometheus, StatsD)
@@ -246,13 +355,45 @@ Use Laravel Events for all extension points.
 
 ## ADR-007: Admin UI Namespace
 
-**Status:** Accepted | **Implemented:** Phase 1 Day 6 | **PR:** #TODO
+**Status:** Accepted | **Implemented:** Phase 1 Day 6 | **PR:** feature/phase1-implementation
 
 ### Context
 Admin UI routes must coexist with mock routes without conflict.
 
 ### Decision
 Use `/__mockitect` (double underscore prefix) for all admin routes.
+
+### Implementation Notes
+**Route Configuration** (`bootstrap/app.php`):
+```php
+using: function () {
+    // Load admin routes FIRST (before catch-all)
+    Route::middleware('web')
+        ->group(__DIR__.'/../routes/mockitect.php');
+    
+    // Load web routes LAST (includes catch-all)
+    Route::middleware('web')
+        ->group(__DIR__.'/../routes/web.php');
+},
+```
+
+**Admin Routes** (`routes/mockitect.php`):
+- `GET /__mockitect` → DashboardController@index
+- `GET /__mockitect/mocks` → MockController@index
+- `GET /__mockitect/mocks/create` → MockController@create
+- `POST /__mockitect/mocks` → MockController@store
+- `GET /__mockitect/mocks/{mock}/edit` → MockController@edit
+- `PUT /__mockitect/mocks/{mock}` → MockController@update
+- `DELETE /__mockitect/mocks/{mock}` → MockController@destroy
+- `GET /__mockitect/logs` → RequestLogController@index
+- `GET /__mockitect/logs/{log}` → RequestLogController@show
+
+**Controllers:** `app/Http/Controllers/Mockitect/`
+- DashboardController.php
+- MockController.php
+- RequestLogController.php
+
+**Result:** Admin routes take precedence over catch-all route, ensuring no conflicts.
 
 ### Implementation
 ```php
@@ -278,6 +419,30 @@ Request logging is critical for debugging but adds overhead.
 
 ### Decision
 Use synchronous logging in Phase 1, migrate to async in Phase 4 if needed.
+
+### Implementation Notes
+**Implementation:** `MockRequestHandler::logRequest()`
+
+**Logged Data:**
+- `mock_id` - Reference to matched mock (nullable)
+- `method` - HTTP method (GET, POST, etc.)
+- `path` - Request path
+- `headers` - Request headers (JSON)
+- `query_params` - Query parameters (JSON)
+- `body` - Request body
+- `response_status` - HTTP response status code
+- `response_headers` - Response headers (JSON)
+- `response_body` - Response body
+- `response_time_ms` - Response time in milliseconds
+- `was_matched` - Boolean indicating if mock was found
+
+**Storage:** SQLite table with JSON columns
+**Query Scopes:**
+- `recent($limit)` - Get N most recent logs
+- `matched()` - Filter matched requests only
+- `unmatched()` - Filter unmatched requests only
+
+**Current Overhead:** ~5-10ms per request (acceptable for Phase 1)
 
 ### Phase 1 Implementation
 ```php
